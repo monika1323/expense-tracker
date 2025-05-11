@@ -1,0 +1,265 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Expense Tracker (Custom Password)</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js">
+    function startVoiceInput() {
+      if (!('webkitSpeechRecognition' in window)) {
+        alert("Voice input is not supported in this browser.");
+        return;
+      }
+
+      const recognition = new webkitSpeechRecognition();
+      recognition.lang = "en-IN";
+      recognition.start();
+
+      recognition.onresult = function(event) {
+        const transcript = event.results[0][0].transcript.toLowerCase();
+        const match = transcript.match(/(\d+)(?:.*for)?\s+(.*)/i);
+        if (match) {
+          const amount = parseFloat(match[1]);
+          const description = match[2];
+          document.getElementById('amount').value = amount;
+          document.getElementById('description').value = description;
+          addOrUpdateExpense();
+        } else {
+          alert("Could not understand. Try saying something like '200 for groceries'.");
+        }
+      };
+    }
+  </script>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f0f0f0; padding: 20px; }
+    .hidden { display: none; }
+    input, button { margin: 5px; padding: 8px; }
+    .expense { margin-top: 10px; padding: 10px; background: #fff; border-radius: 6px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    canvas { max-width: 500px; margin-top: 30px; }
+  </style>
+
+  <link rel="manifest" href="manifest.json">
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('service-worker.js')
+        .then(() => console.log("Service Worker Registered"));
+    }
+  </script>
+</head>
+<body>
+
+  <div id="passwordSetup">
+    <h2>Set a New Password</h2>
+    <input type="password" id="newPasswordInput" placeholder="Create a password">
+    <button onclick="setNewPassword()">Set Password</button>
+  </div>
+
+  <div id="login" class="hidden">
+    <h2>Enter Your Password</h2>
+    <input type="password" id="passwordInput" placeholder="Enter password">
+    <button onclick="checkPassword()">Login</button>
+    <p id="error" style="color:red;"></p>
+  </div>
+
+  <div id="tracker" class="hidden">
+    <h1>Expense Tracker</h1>
+
+    <label>Enter Total Salary:</label>
+    <input type="number" id="salary" placeholder="e.g. 50000" onchange="setSalary()" />
+    <p><strong>Remaining Balance:</strong> ₹<span id="balance">0</span></p>
+
+    <input type="number" id="amount" placeholder="Expense Amount" />
+    <input type="text" id="description" placeholder="Description" />
+    <button onclick="addOrUpdateExpense()">Add/Update Expense</button>
+    <input type="color" id="bgColorPicker" onchange="changeBackground(this.value)" />
+
+    
+  <h2>Summary</h2>
+  <div id="summary" style="margin-bottom: 20px; background: #fff; padding: 10px; border-radius: 6px;">
+    <p><strong>Total Expenses:</strong> ₹<span id="totalExpenses">0</span></p>
+    <p><strong>Highest Expense:</strong> ₹<span id="maxExpense">0</span></p>
+  </div>
+
+  <button onclick="startVoiceInput()">Add Expense via Voice</button>
+  <h2>Expenses</h2>
+    
+    <div id="expenseList"></div>
+
+    <div style="display: flex; justify-content: center;"><canvas id="expenseChart"></canvas></div>
+  </div>
+
+  <script>
+    let salary = parseFloat(localStorage.getItem('salary')) || 0;
+    let expenses = JSON.parse(localStorage.getItem('expenses')) || [];
+    let editingId = null;
+    let chart;
+
+    window.onload = function () {
+      const savedPassword = localStorage.getItem('trackerPassword');
+      if (!savedPassword) {
+        document.getElementById('passwordSetup').classList.remove('hidden');
+      } else {
+        document.getElementById('login').classList.remove('hidden');
+      }
+    };
+
+    function setNewPassword() {
+      const newPass = document.getElementById('newPasswordInput').value;
+      if (!newPass) return alert("Password cannot be empty");
+      localStorage.setItem('trackerPassword', newPass);
+      document.getElementById('passwordSetup').classList.add('hidden');
+      document.getElementById('tracker').classList.remove('hidden');
+      loadTracker();
+    }
+
+    function checkPassword() {
+      const input = document.getElementById('passwordInput').value;
+      const saved = localStorage.getItem('trackerPassword');
+      if (input === saved) {
+        document.getElementById('login').classList.add('hidden');
+        document.getElementById('tracker').classList.remove('hidden');
+        loadTracker();
+      } else {
+        document.getElementById('error').innerText = "Incorrect password!";
+      }
+    }
+
+    function loadTracker() {
+      document.getElementById('salary').value = salary || '';
+      document.getElementById('balance').innerText = calculateBalance();
+      const bgColor = localStorage.getItem('bgColor') || '#ffffff';
+      document.body.style.backgroundColor = bgColor;
+      document.getElementById('bgColorPicker').value = bgColor;
+      renderExpenses();
+    }
+
+    function setSalary() {
+      salary = parseFloat(document.getElementById('salary').value);
+      localStorage.setItem('salary', salary);
+      document.getElementById('balance').innerText = calculateBalance();
+    }
+
+    function calculateBalance() {
+      const totalSpent = expenses.reduce((sum, e) => sum + parseFloat(e.amount), 0);
+      return (salary - totalSpent).toFixed(2);
+    }
+
+    function addOrUpdateExpense() {
+      const amount = parseFloat(document.getElementById('amount').value);
+      const description = document.getElementById('description').value;
+      if (!amount || !description) return alert("Please fill both fields");
+
+      if (editingId !== null) {
+        const index = expenses.findIndex(e => e.id === editingId);
+        expenses[index] = { id: editingId, amount, description };
+        editingId = null;
+      } else {
+        expenses.push({ id: Date.now(), amount, description });
+      }
+
+      localStorage.setItem('expenses', JSON.stringify(expenses));
+      document.getElementById('balance').innerText = calculateBalance();
+      renderExpenses();
+      document.getElementById('amount').value = '';
+      document.getElementById('description').value = '';
+    }
+
+    
+    function updateSummary() {
+      const total = expenses.reduce((sum, e) => sum + parseFloat(e.amount), 0);
+      const max = expenses.length ? Math.max(...expenses.map(e => parseFloat(e.amount))) : 0;
+      document.getElementById("totalExpenses").innerText = total.toFixed(2);
+      document.getElementById("maxExpense").innerText = max.toFixed(2);
+    }
+
+    function renderExpenses() {
+      updateSummary();
+    
+      const list = document.getElementById('expenseList');
+      list.innerHTML = '';
+      expenses.forEach(exp => {
+        const div = document.createElement('div');
+        div.className = 'expense';
+        div.innerHTML = `
+          <span>₹${exp.amount} - ${exp.description}</span>
+          <div>
+            <button onclick="editExpense(${exp.id})">Edit</button>
+            <button onclick="deleteExpense(${exp.id})">Delete</button>
+          </div>
+        `;
+        list.appendChild(div);
+      });
+      renderChart();
+    }
+
+    function editExpense(id) {
+      const expense = expenses.find(e => e.id === id);
+      document.getElementById('amount').value = expense.amount;
+      document.getElementById('description').value = expense.description;
+      editingId = id;
+    }
+
+    function deleteExpense(id) {
+      expenses = expenses.filter(e => e.id !== id);
+      localStorage.setItem('expenses', JSON.stringify(expenses));
+      document.getElementById('balance').innerText = calculateBalance();
+      renderExpenses();
+    }
+
+    function changeBackground(color) {
+      document.body.style.backgroundColor = color;
+      localStorage.setItem('bgColor', color);
+    }
+
+    function renderChart() {
+      const labels = expenses.map(e => e.description);
+      const data = expenses.map(e => parseFloat(e.amount));
+
+      const ctx = document.getElementById('expenseChart').getContext('2d');
+      if (chart) chart.destroy();
+
+      chart = new Chart(ctx, {
+        type: 'pie',
+        data: {
+          labels: labels,
+          datasets: [{
+            data: data,
+            backgroundColor: [
+              '#ff6384', '#36a2eb', '#ffce56', '#8bc34a', '#ff9800', '#9c27b0'
+            ]
+          }]
+        },
+        options: {
+          responsive: true
+        }
+      });
+    }
+  
+    function startVoiceInput() {
+      if (!('webkitSpeechRecognition' in window)) {
+        alert("Voice input is not supported in this browser.");
+        return;
+      }
+
+      const recognition = new webkitSpeechRecognition();
+      recognition.lang = "en-IN";
+      recognition.start();
+
+      recognition.onresult = function(event) {
+        const transcript = event.results[0][0].transcript.toLowerCase();
+        const match = transcript.match(/(\d+)(?:.*for)?\s+(.*)/i);
+        if (match) {
+          const amount = parseFloat(match[1]);
+          const description = match[2];
+          document.getElementById('amount').value = amount;
+          document.getElementById('description').value = description;
+          addOrUpdateExpense();
+        } else {
+          alert("Could not understand. Try saying something like '200 for groceries'.");
+        }
+      };
+    }
+  </script>
+</body>
+</html>
